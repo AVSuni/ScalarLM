@@ -64,7 +64,7 @@ ENV BASE_NAME=cpu
 
 ###############################################################################
 # AMD BASE IMAGE
-FROM gdiamos/rocm-base-mi300:v0.9926 AS amd
+FROM rocm/primus:v26.3 AS amd
 
 ENV BASE_NAME=amd
 
@@ -74,7 +74,11 @@ ENV HIP_FORCE_DEV_KERNARG=1
 ARG INSTALL_ROOT=/app/cray
 WORKDIR ${INSTALL_ROOT}
 
+ENV PATH="/app/venv/bin:$PATH"
 ENV LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-}:/app/venv/lib/python3.12/site-packages/torch/lib:/usr/local/rdma-lib
+
+RUN pip install uv && \
+    uv pip install ninja
 
 # Open MPI from ROCm base image (used by train_job_entrypoint.sh mpirun launcher)
 ENV PATH=$PATH:/opt/ompi-rocm/bin
@@ -271,17 +275,17 @@ WORKDIR ${INSTALL_ROOT}
 # MAIN IMAGE
 FROM vllm AS infra
 
+ARG INSTALL_ROOT=/app/cray
+
 RUN apt-get update -y  \
     && apt-get install -y build-essential \
     less curl wget net-tools vim iputils-ping strace gdb python3-dbg python3-dev \
+    slurm-wlm libslurm-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Setup python path
-ENV PYTHONPATH="${PYTHONPATH:-}:${INSTALL_ROOT}/infra"
-ENV PYTHONPATH="${PYTHONPATH:-}:${INSTALL_ROOT}/sdk"
-ENV PYTHONPATH="${PYTHONPATH:-}:${INSTALL_ROOT}/ml"
-ENV PYTHONPATH="${PYTHONPATH:-}:${INSTALL_ROOT}/test"
-ENV PYTHONPATH="${PYTHONPATH:-}:${INSTALL_ROOT}/vllm"
+ENV INSTALL_ROOT=${INSTALL_ROOT}
+ENV PYTHONPATH="${INSTALL_ROOT}/infra:${INSTALL_ROOT}/sdk:${INSTALL_ROOT}/ml:${INSTALL_ROOT}/test:${INSTALL_ROOT}/vllm"
 
 # Megatron dependencies (GPU only)
 # note this has to happen after vllm because it overrides some packages installed by vllm
@@ -311,7 +315,7 @@ WORKDIR ${INSTALL_ROOT}
 # Build SLURM plugin
 RUN /app/cray/infra/slurm_src/compile.sh
 
-ENV LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-}:${PYTHONPATH:-}:/usr/local/lib/slurm
+ENV LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-}:${INSTALL_ROOT}/infra:${INSTALL_ROOT}/sdk:${INSTALL_ROOT}/ml:${INSTALL_ROOT}/test:${INSTALL_ROOT}/vllm:/usr/local/lib/slurm
 ENV SLURM_CONF=${INSTALL_ROOT}/nfs/slurm.conf
 ENV VLLM_CPU_MOE_PREPACK=0
 

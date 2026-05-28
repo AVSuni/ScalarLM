@@ -29,7 +29,7 @@ else
 fi
 
 # Disable the plugin on the AMD target
-if [ $BASE_NAME == "amd" ] || [ $BASE_NAME="nvidia" ]; then
+if [ "$BASE_NAME" == "amd" ] || [ "$BASE_NAME" == "nvidia" ]; then
     sed -i -e 's/CgroupPlugin=cgroup\/docker/CgroupPlugin=cgroup\/v1/g' /app/cray/infra/slurm_configs/cgroup.conf
 else
     # Copy the shared object file to the /usr/lib directory
