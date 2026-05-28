@@ -1,6 +1,6 @@
 inspect_args
 
-./cray build-image
+./scalarlm build-image
 
 declare -a squeue_command_parts
 squeue_command_parts=(

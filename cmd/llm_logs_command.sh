@@ -9,7 +9,7 @@ if [ -z "$model" ]; then
     model="latest"
 fi
 
-./cray build-image
+./scalarlm build-image
 
 declare -a log_command_parts
 log_command_parts=(

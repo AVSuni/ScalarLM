@@ -19,7 +19,7 @@ def main():
 
 def get_code():
     return """
-from gpu_aware_mpi import get_size, get_rank, send, recv, barrier
+from cray_infra.training.distributed import get_size, get_rank, send, recv, barrier
 import torch
 
 from cray_infra.training.training_job_context import training_job_context

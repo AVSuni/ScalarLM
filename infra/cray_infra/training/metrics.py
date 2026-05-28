@@ -1,5 +1,5 @@
 import torch
-from gpu_aware_mpi import get_rank
+from cray_infra.training.distributed import get_rank
 
 import logging
 

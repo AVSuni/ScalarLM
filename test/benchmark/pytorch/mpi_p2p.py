@@ -3,7 +3,7 @@ import json
 import time
 import os
 
-from gpu_aware_mpi import send, recv, barrier, get_rank, get_size, finalize_mpi
+from cray_infra.training.distributed import send, recv, barrier, get_rank, get_size, finalize
 
 from tqdm import tqdm
 

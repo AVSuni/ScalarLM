@@ -8,7 +8,7 @@ from cray_megatron.collectives.main_rank_only import main_rank_only
 import traceback
 import sys
 import os
-from gpu_aware_mpi import finalize_mpi
+from cray_infra.training.distributed import init, finalize
 
 @main_rank_only
 def print_exception():
@@ -27,6 +27,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 def main():
+    init()
 
     harness = TrainingHarness()
 
@@ -45,7 +46,7 @@ def main():
         )
         raise e
 
-    finalize_mpi()
+    finalize()
 
 def setup_logging():
     logging.basicConfig(level=logging.DEBUG)

@@ -1,7 +1,7 @@
 import argparse
 import time
 import torch
-from gpu_aware_mpi import send, recv, barrier, get_rank, get_size, finalize_mpi
+from cray_infra.training.distributed import send, recv, barrier, get_rank, get_size, finalize
 
 def create_buffer(arch_type, size, rank):
     if arch_type == 'cuda':
@@ -65,4 +65,4 @@ if __name__ == "__main__":
     if rank == 0:
         print(f"Send/Recv (GB/s): {bandwidth:.6}")
         
-    finalize_mpi()
+    finalize()

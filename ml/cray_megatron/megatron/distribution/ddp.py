@@ -1,4 +1,4 @@
-from gpu_aware_mpi import allreduce, get_size
+from cray_infra.training.distributed import allreduce, get_size
 
 import torch.nn as nn
 

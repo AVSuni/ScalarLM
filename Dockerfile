@@ -76,6 +76,10 @@ WORKDIR ${INSTALL_ROOT}
 
 ENV LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-}:/app/venv/lib/python3.12/site-packages/torch/lib:/usr/local/rdma-lib
 
+# Open MPI from ROCm base image (used by train_job_entrypoint.sh mpirun launcher)
+ENV PATH=$PATH:/opt/ompi-rocm/bin
+ENV LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-}:/opt/ompi-rocm/lib
+
 ###############################################################################
 # FRONTEND BUILD STAGE
 
@@ -266,11 +270,6 @@ WORKDIR ${INSTALL_ROOT}
 ###############################################################################
 # MAIN IMAGE
 FROM vllm AS infra
-
-# Build GPU-aware MPI
-COPY ./infra/cray_infra/training/gpu_aware_mpi ${INSTALL_ROOT}/infra/cray_infra/training/gpu_aware_mpi
-RUN python3 ${INSTALL_ROOT}/infra/cray_infra/training/gpu_aware_mpi/setup.py bdist_wheel --dist-dir=dist && \
-    pip install dist/*.whl
 
 RUN apt-get update -y  \
     && apt-get install -y build-essential \

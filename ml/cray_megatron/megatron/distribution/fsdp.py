@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from torch.utils.checkpoint import checkpoint
-from gpu_aware_mpi import get_size, get_rank, allgather, reduce_scatter
+from cray_infra.training.distributed import get_size, get_rank, allgather, reduce_scatter
 from collections import defaultdict
 from cray_infra.training.metrics import get_model_memory_footprint
 

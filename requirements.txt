@@ -6,7 +6,6 @@ aiofiles
 persist-queue
 matplotlib
 streaming-form-data==1.15.0
-mpi4py==4.0.3
 openai>=1.40.0  # Ensure modern openai package (ensure types module present)
 openai-harmony
 humanize

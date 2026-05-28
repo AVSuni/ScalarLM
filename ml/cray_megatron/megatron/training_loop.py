@@ -20,7 +20,7 @@ import torch
 
 import time
 import logging
-from gpu_aware_mpi import allreduce, get_size
+from cray_infra.training.distributed import allreduce, get_size
 
 logger = logging.getLogger(__name__)
 

@@ -9,7 +9,7 @@ if [ -z "$tag" ]; then
   tag="cray:latest"
 fi
 
-./cray build-image
+./scalarlm build-image
 
 declare -a start_slurm_command_parts
 

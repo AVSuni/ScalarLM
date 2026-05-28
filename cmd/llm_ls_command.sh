@@ -1,6 +1,6 @@
 inspect_args
 
-./cray build-image
+./scalarlm build-image
 
 declare -a ls_command_parts
 ls_command_parts=(

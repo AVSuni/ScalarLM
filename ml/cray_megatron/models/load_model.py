@@ -4,7 +4,7 @@ from cray_megatron.megatron.distribution.apply_distribution_strategy import (
 )
 from cray_megatron.collectives.main_rank_only import is_main_rank
 
-from gpu_aware_mpi import get_size, get_rank, allgather
+from cray_infra.training.distributed import get_size, get_rank, allgather
 
 from ml.adapters.add_adapters_to_model import add_adapters_to_model
 

@@ -1,5 +1,5 @@
 from functools import wraps
-from gpu_aware_mpi import get_rank, barrier
+from cray_infra.training.distributed import get_rank, barrier
 
 def is_main_rank():
     return get_rank() == 0

@@ -3,7 +3,7 @@ from cray_megatron.megatron.distribution.ddp import DDP
 from cray_megatron.megatron.distribution.no_distribution import NoDistribution
 from cray_infra.util.get_job_config import get_job_config
 
-from gpu_aware_mpi import get_size, get_rank
+from cray_infra.training.distributed import get_size, get_rank
 
 import torch
 

@@ -1,7 +1,7 @@
 import argparse
 import time
 import torch
-from gpu_aware_mpi import allgather, allreduce, reduce_scatter, barrier, get_rank, get_size, finalize_mpi
+from cray_infra.training.distributed import allgather, allreduce, reduce_scatter, barrier, get_rank, get_size, finalize
 
 def create_buffer(arch, size, rank):
     if arch == 'cuda':
@@ -76,14 +76,14 @@ if __name__ == "__main__":
             bw_scientific = '{:.2e}'.format(bw)
             print(f"{name}: {bw_scientific}")
     
-    finalize_mpi()
+    finalize()
 
 
 # For CUDA GPUs
-# mpirun --allow-run-as-root --oversubscribe -np 4 python test/infra/distribution_strategy/benchmark_mpi_collectives.py --arch cuda
+# torchrun --nnodes=1 --nproc-per-node=4 test/infra/distribution_strategy/benchmark_mpi_collectives.py --arch cuda
 
 # For ROCm GPUs
-# mpirun --allow-run-as-root -np 4 python test/infra/distribution_strategy/benchmark_mpi_collectives.py --arch rocm
+# torchrun --nnodes=1 --nproc-per-node=4 test/infra/distribution_strategy/benchmark_mpi_collectives.py --arch rocm
 
 # For CPU
-# mpirun --allow-run-as-root --oversubscribe -np 2 python test/infra/distribution_strategy/benchmark_mpi_collectives.py --arch cpu
+# torchrun --nnodes=1 --nproc-per-node=2 test/infra/distribution_strategy/benchmark_mpi_collectives.py --arch cpu

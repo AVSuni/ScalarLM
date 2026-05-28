@@ -6,7 +6,7 @@ if [ -z "$model" ]; then
     model="latest"
 fi
 
-./cray build-image
+./scalarlm build-image
 
 declare -a plot_command_parts
 plot_command_parts=(
