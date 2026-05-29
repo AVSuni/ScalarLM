@@ -1,89 +1,41 @@
+"""CLI entry point for distributed collective benchmarks."""
+
 import argparse
-import time
-import torch
-from cray_infra.training.distributed import allgather, allreduce, reduce_scatter, barrier, get_rank, get_size, finalize
 
-def create_buffer(arch, size, rank):
-    if arch == 'cuda':
-        return torch.ones(size, dtype=torch.float32, device='cuda')
-    elif arch == 'rocm':
-        return torch.ones(size, dtype=torch.float32, device='cuda:' + str(rank))  # ROCm uses the same device string
-    else:
-        return torch.ones(size, dtype=torch.float32, device='cpu')
+from cray_infra.training.distributed import get_rank
 
-def benchmark_collective(collective_fn, send_size, recv_size, expected_value, all_reduce_flag=False, num_iters=100, warmup=10):
-    size = get_size()
-    rank = get_rank()
-    sendbuf = create_buffer(args.arch, send_size, rank).contiguous()
-    # Create send/recv buffers
-    recvbuf = torch.empty(recv_size, dtype=torch.float32, device=sendbuf.device).contiguous()
+from distributed_benchmarks import (
+    run_collectives_benchmark,
+    setup_distributed,
+    teardown_distributed,
+)
 
-    # Warmup iterations
-    for _ in range(warmup):
-        collective_fn(sendbuf, recvbuf)
 
-    # Timing the collective operation
-    barrier()
-    t0 = time.time()
-    for _ in range(num_iters):
-        if all_reduce_flag:
-            sendbuf = create_buffer(args.arch, send_size, rank).contiguous()
-        collective_fn(sendbuf, recvbuf)
-    barrier()
-    dt = time.time() - t0
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--arch", choices=["cuda", "rocm", "cpu"], required=True)
+    parser.add_argument(
+        "--dtype",
+        choices=["float32", "bfloat16"],
+        default="float32",
+        help="Reserved for future dtype support",
+    )
+    args = parser.parse_args()
 
-    # Verify correctness
-    if all_reduce_flag:
-        assert torch.allclose(sendbuf, torch.full_like(sendbuf, expected_value), atol=1e-6), "Verification failed"
-    else:
-        assert torch.allclose(recvbuf, torch.full_like(recvbuf, expected_value), atol=1e-6), "Verification failed"
-
-    # Calculate bandwidth (we use float32 for ReduceScatter and AllReduce internally)
-    datatype_bytes = 4
-    total_data = send_size * datatype_bytes * 2 * size  # 4 bytes per float32, 2 for send/recv
-    bandwidth = (total_data / dt) / 1e9  # GB/s
-    return bandwidth
+    setup_distributed()
+    try:
+        results = run_collectives_benchmark(args.arch)
+        if get_rank() == 0:
+            print("\nBenchmark Results (GB/s):")
+            for name, bw in results.items():
+                print(f"{name}: {bw:.2e}")
+    finally:
+        teardown_distributed()
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--arch', choices=['cuda', 'rocm', 'cpu'], required=True)
-    parser.add_argument('--dtype', choices=['float32', 'bfloat16'], default='float32', help="Data type for buffers")
-    args = parser.parse_args()
+    main()
 
-    args.dtype = torch.float32 if args.dtype == 'float32' else torch.bfloat16
-
-    data_size = 4194304 
-    rank = get_rank()
-    size = get_size()
-
-    collectives = {
-         'AllGather': (lambda sbuf, rbuf: allgather(sbuf, rbuf), data_size, data_size * size, 1.0, False),
-         'ReduceScatter': (lambda sbuf, rbuf: reduce_scatter(sbuf, rbuf), data_size, data_size // size, size * 1.0, False),
-         'AllReduce': (lambda sbuf, rbuf: allreduce(sbuf), data_size, 1, size * 1.0, True),
-     }
-
-    results = {}
-    
-    for name, info in collectives.items():
-         bw = benchmark_collective(info[0], info[1], info[2], info[3], info[4])
-         if rank == 0:
-             results[name] = bw
-
-    if rank == 0:
-        print("\nBenchmark Results (GB/s):")
-        for name, bw in results.items():
-            bw_scientific = '{:.2e}'.format(bw)
-            print(f"{name}: {bw_scientific}")
-    
-    finalize()
-
-
-# For CUDA GPUs
 # torchrun --nnodes=1 --nproc-per-node=4 test/infra/distribution_strategy/benchmark_mpi_collectives.py --arch cuda
-
-# For ROCm GPUs
 # torchrun --nnodes=1 --nproc-per-node=4 test/infra/distribution_strategy/benchmark_mpi_collectives.py --arch rocm
-
-# For CPU
 # torchrun --nnodes=1 --nproc-per-node=2 test/infra/distribution_strategy/benchmark_mpi_collectives.py --arch cpu

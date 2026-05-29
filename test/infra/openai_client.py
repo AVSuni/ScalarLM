@@ -30,7 +30,7 @@ class TestOpenAIClient(unittest.IsolatedAsyncioTestCase):
         config = get_config()
 
         client = AsyncOpenAI(
-            base_url=config["api_url"] + "/v1/openai",
+            base_url=config["api_url"] + "/v1",
             api_key="token-abc123",
         )
 

@@ -189,7 +189,7 @@ cray_test_usage() {
     # :argument.usage
     printf "  %s\n" "TEST-PATH"
     printf "    Relative path to the directory or file with test cases\n"
-    printf "    %s\n" "Default: test/infra/*"
+    printf "    %s\n" "Default: test/infra"
     echo
 
   fi
@@ -690,7 +690,12 @@ cray_test_command() {
     pytest_command_parts+=("-rP")
   fi
 
-  pytest_command_parts+=($test_path)
+  for path in $test_path; do
+    case "$(basename "$path")" in
+      __pycache__) continue ;;
+    esac
+    pytest_command_parts+=("$path")
+  done
   pytest_command="${pytest_command_parts[*]}"
 
   TTY=-t
@@ -1455,7 +1460,7 @@ cray_test_parse_requirements() {
   done
 
   # :command.default_assignments
-  [[ -n ${args['test-path']:-} ]] || args['test-path']="test/infra/*"
+  [[ -n ${args['test-path']:-} ]] || args['test-path']="test/infra"
   [[ -n ${args['--coverage-path']:-} ]] || args['--coverage-path']="/tmp/cray/coverage"
   [[ -n ${args['--verbose']:-} ]] || args['--verbose']="no"
   [[ -n ${args['--workers']:-} ]] || args['--workers']="auto"

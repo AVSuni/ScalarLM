@@ -2,23 +2,26 @@
 import os
 import torch
 
+from cray_infra.one_server.vllm_app_registry import register_vllm_app
 from cray_infra.util.get_config import get_config
 from cray_infra.huggingface.get_hf_token import get_hf_token
 
-from vllm.entrypoints.openai.api_server import build_app, decorate_logs, \
-    init_app_state, setup_server, \
-    load_log_config, build_async_engine_client
-
-from vllm.tool_parsers import ToolParserManager
+from vllm.entrypoints.openai.api_server import (
+    build_app,
+    build_async_engine_client,
+    decorate_logs,
+    init_app_state,
+    setup_server,
+)
+from vllm.entrypoints.openai.server_utils import get_uvicorn_log_config
 from vllm.entrypoints.launcher import serve_http
-
 from vllm.entrypoints.openai.cli_args import make_arg_parser
+from vllm.reasoning.abs_reasoning_parsers import ReasoningParserManager
+from vllm.tool_parsers import ToolParserManager
 from vllm.utils.argparse_utils import FlexibleArgumentParser
 
-from vllm.entrypoints.utils import (log_non_default_args)
 import vllm.envs as envs
 
-import uvicorn
 import logging
 
 logger = logging.getLogger(__name__)
@@ -96,6 +99,7 @@ async def create_vllm(server_status, port):
 
     args = parser.parse_args(args=args)
 
+    args.host = "0.0.0.0"
     args.port = port
     args.model = config["model"]
 
@@ -127,20 +131,22 @@ async def run_server_worker(server_status, listen_address,
 
     server_index = client_config.get("client_index", 0) if client_config else 0
 
-    # Load logging config for uvicorn if specified
-    log_config = load_log_config(args.log_config_file)
+    log_config = get_uvicorn_log_config(args)
     if log_config is not None:
-        uvicorn_kwargs['log_config'] = log_config
+        uvicorn_kwargs["log_config"] = log_config
 
     async with build_async_engine_client(
             args,
             client_config=client_config,
     ) as engine_client:
+        supported_tasks = await engine_client.get_supported_tasks()
+        model_config = engine_client.model_config
 
-        app = build_app(args)
+        app = build_app(args, supported_tasks, model_config)
         server_status.set_app(app)
 
-        await init_app_state(engine_client, app.state, args)
+        await init_app_state(engine_client, app.state, args, supported_tasks)
+        register_vllm_app(app)
 
         logger.info("Starting vLLM API server %d on %s", server_index,
                     listen_address)
@@ -159,6 +165,7 @@ async def run_server_worker(server_status, listen_address,
             ssl_certfile=args.ssl_certfile,
             ssl_ca_certs=args.ssl_ca_certs,
             ssl_cert_reqs=args.ssl_cert_reqs,
+            ssl_ciphers=args.ssl_ciphers,
             h11_max_incomplete_event_size=args.h11_max_incomplete_event_size,
             h11_max_header_count=args.h11_max_header_count,
             **uvicorn_kwargs,

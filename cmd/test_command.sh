@@ -28,7 +28,12 @@ if [ "yes" == "$verbose" ]; then
   pytest_command_parts+=("-rP")
 fi
 
-pytest_command_parts+=($test_path)
+for path in $test_path; do
+  case "$(basename "$path")" in
+    __pycache__) continue ;;
+  esac
+  pytest_command_parts+=("$path")
+done
 pytest_command="${pytest_command_parts[*]}"
 
 TTY=-t

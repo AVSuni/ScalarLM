@@ -3,6 +3,8 @@ from cray_infra.one_server.create_vllm import create_vllm
 from cray_infra.one_server.create_megatron import create_megatron
 from cray_infra.one_server.create_generate_worker import create_generate_worker
 
+from cray_infra.one_server.vllm_app_registry import clear_vllm_app
+
 import asyncio
 import logging
 
@@ -73,6 +75,8 @@ class ServerStatus:
         for server in self.servers:
             logger.debug(f"Server {server} is cancelled")
             await server.shutdown()
+
+        clear_vllm_app()
 
     def set_app(self, app):
         self.app = app

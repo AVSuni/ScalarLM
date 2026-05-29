@@ -310,6 +310,8 @@ COPY ./test ${INSTALL_ROOT}/test
 COPY ./ml ${INSTALL_ROOT}/ml
 COPY ./scripts ${INSTALL_ROOT}/scripts
 
+RUN uv pip install --no-compile --no-cache-dir -r ${INSTALL_ROOT}/test/requirements-pytest.txt
+
 WORKDIR ${INSTALL_ROOT}
 
 # Build SLURM plugin

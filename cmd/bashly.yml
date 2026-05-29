@@ -30,7 +30,7 @@ commands:
   help: Run tests in the container
   args:
     - name: test-path
-      default: "test/infra/*"
+      default: "test/infra"
       help: Relative path to the directory or file with test cases
   flags:
     - long: --coverage-path
