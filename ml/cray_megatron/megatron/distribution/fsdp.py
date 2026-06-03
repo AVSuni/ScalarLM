@@ -1,7 +1,13 @@
 import torch
 import torch.nn as nn
 from torch.utils.checkpoint import checkpoint
-from cray_infra.training.distributed import get_size, get_rank, allgather, reduce_scatter
+from cray_infra.training.distributed import (
+    get_size,
+    get_rank,
+    allgather,
+    reduce_scatter,
+    cuda_device,
+)
 from collections import defaultdict
 from cray_infra.training.metrics import get_model_memory_footprint
 
@@ -340,27 +346,32 @@ def shard_tensor(tensor):
     padded_numel = ((original_numel + world_size - 1) // world_size) * world_size
     padding = padded_numel - original_numel
 
+    device = cuda_device()
+
     # Pad tensor if needed
     if padding > 0:
         tensor_padded = torch.cat(
             [
-                tensor.view(-1),
-                torch.zeros(padding, device=tensor.device, dtype=tensor.dtype),
+                tensor.view(-1).to(device),
+                torch.zeros(padding, dtype=tensor.dtype).to(device),
             ]
         )
     else:
-        tensor_padded = tensor.view(-1)
+        tensor_padded = tensor.view(-1).to(device)
 
     # Split into equal shards
     shard_size = padded_numel // world_size
     start = rank * shard_size
     shard = tensor_padded[start : start + shard_size].clone()
 
-    # Gather metadata from all ranks
+    # Gather metadata from all ranks on GPU for NCCL.
     local_metadata = torch.tensor(
-        [original_numel, *original_shape, shard_size, padding], dtype=torch.long
-    )
-    all_metadata = torch.zeros((world_size, local_metadata.numel()), dtype=torch.long)
+        [original_numel, *original_shape, shard_size, padding],
+        dtype=torch.long,
+    ).to(device)
+    all_metadata = torch.zeros(
+        (world_size, local_metadata.numel()), dtype=torch.long
+    ).to(device)
     allgather(local_metadata, all_metadata.view(-1))
 
     # Reshape all_metadata back to 2D after allgather
@@ -413,11 +424,13 @@ def collectives_all_gather(shard, metadata_dict):
     world_size = get_size()
     rank = get_rank()
 
-    # Prepare buffers
+    device = cuda_device()
+
+    # Prepare buffers on GPU for NCCL collectives.
     orig_dtype = shard.dtype
-    shard = shard.to(torch.float32)
+    shard = shard.to(torch.float32).to(device)
     gathered = torch.zeros(
-        shard.numel() * world_size, device=shard.device, dtype=torch.float32
+        shard.numel() * world_size, dtype=torch.float32, device=device
     )
 
     # Collective operation in float32
@@ -452,19 +465,21 @@ def collectives_reduce_scatter(tensor, metadata_dict):
 
     original_numel, _, shard_size, padding = metadata_dict[rank]
 
+    device = cuda_device()
+
     # Pad tensor if needed
-    tensor_padded = tensor.reshape(-1)
+    tensor_padded = tensor.reshape(-1).to(device)
     if padding > 0:
         tensor_padded = torch.concatenate(
             [
                 tensor_padded,
-                torch.zeros(padding, device=tensor.device, dtype=tensor_padded.dtype),
+                torch.zeros(padding, dtype=tensor_padded.dtype).to(device),
             ]
         )
 
-    # Convert to float32 for the collective
+    # Convert to float32 for the collective on GPU
     tensor_padded = tensor_padded.to(torch.float32)
-    local_shard = torch.zeros(shard_size, device=tensor.device, dtype=torch.float32)
+    local_shard = torch.zeros(shard_size, dtype=torch.float32, device=device)
 
     # Collective operation in float32
     reduce_scatter(tensor_padded, local_shard)

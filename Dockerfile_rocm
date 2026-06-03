@@ -1,0 +1,446 @@
+# Build with: ./scalarlm build-image amd
+
+ARG COMMON_WORKDIR=/app/cray
+ARG PYTORCH_ROCM_ARCH="gfx90a;gfx942"
+ARG NIC_BACKEND=all
+ARG AINIC_VERSION=1.117.5-a-77
+ARG UBUNTU_CODENAME=noble
+
+###############################################################################
+FROM rocm/primus:v26.2 AS amd
+
+RUN apt-get update && apt-get install -y bc jq libibverbs-dev rdma-core ibverbs-utils && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN apt-get update -y && apt-get install -y python3-venv slurm-wlm libslurm-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+ENV BASE_NAME=amd
+ENV HIP_FORCE_DEV_KERNARG=1
+
+ARG INSTALL_ROOT=/app/cray
+WORKDIR ${INSTALL_ROOT}
+
+ENV PATH="/app/venv/bin:/opt/ompi-rocm/bin:${PATH}"
+ENV LD_LIBRARY_PATH="/app/venv/lib/python3.12/site-packages/torch/lib:/usr/local/rdma-lib:/opt/ompi-rocm/lib"
+
+ENV PYTORCH_ROCM_ARCH=${PYTORCH_ROCM_ARCH}
+
+###############################################################################
+# vLLM build base (upstream Dockerfile.rocm `base` stage)
+FROM amd AS vllm_base
+
+ARG COMMON_WORKDIR
+
+RUN apt-get update -q -y && apt-get install -y --no-install-recommends \
+    sqlite3 libsqlite3-dev libfmt-dev libmsgpack-dev libsuitesparse-dev \
+    apt-transport-https ca-certificates wget curl git \
+    libnuma-dev libomp-dev libgrpc-dev libgrpc++-dev libprotobuf-dev \
+    protobuf-compiler-grpc libcpprest-dev libaio-dev \
+    autoconf libtool pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN python -m pip install --upgrade pip
+
+RUN curl -LsSf --retry 3 --retry-delay 5 https://astral.sh/uv/install.sh -o /tmp/uv-install.sh \
+    && env UV_INSTALL_DIR="/usr/local/bin" sh /tmp/uv-install.sh \
+    && rm -f /tmp/uv-install.sh \
+    && uv --version
+
+ENV UV_HTTP_TIMEOUT=500
+ENV UV_INDEX_STRATEGY="unsafe-best-match"
+ENV UV_LINK_MODE=copy
+
+RUN uv pip install ninja meson auditwheel patchelf tomlkit
+
+WORKDIR ${COMMON_WORKDIR}
+
+###############################################################################
+# MoRI runtime + NIC backends (upstream Dockerfile.rocm mori_base)
+# AINIC 1.117.5-a-77 on noble; Broadcom bnxt via NIC_BACKEND=all
+FROM vllm_base AS mori_base
+
+ARG NIC_BACKEND=all
+ARG AINIC_VERSION=1.117.5-a-77
+ARG UBUNTU_CODENAME=noble
+
+RUN /bin/bash -lc 'set -euo pipefail; \
+ \
+ install_ainic() { \
+   apt-get update && apt-get install -y --no-install-recommends ca-certificates curl gnupg apt-transport-https; \
+   rm -rf /var/lib/apt/lists/*; \
+   mkdir -p /etc/apt/keyrings; \
+   curl -fsSL https://repo.radeon.com/rocm/rocm.gpg.key | gpg --dearmor > /etc/apt/keyrings/amdainic.gpg; \
+   echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/amdainic.gpg] https://repo.radeon.com/amdainic/pensando/ubuntu/${AINIC_VERSION} ${UBUNTU_CODENAME} main" \
+     > /etc/apt/sources.list.d/amdainic.list; \
+   apt-get update && apt-get install -y --no-install-recommends \
+     libionic-dev \
+     ionic-common \
+   ; \
+   rm -rf /var/lib/apt/lists/*; \
+ }; \
+ \
+ install_bnxt() { \
+   install -m 0755 -d /etc/apt/keyrings; \
+   curl -fsSL https://packages.broadcom.com/artifactory/api/security/keypair/PackagesKey/public \
+     -o /etc/apt/keyrings/broadcom-nic.asc; \
+   chmod a+r /etc/apt/keyrings/broadcom-nic.asc; \
+   echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/broadcom-nic.asc] https://packages.broadcom.com/artifactory/ethernet-nic-debian-public jammy main" \
+     > /etc/apt/sources.list.d/broadcom-nic.list; \
+   apt-get update && apt-get install -y --no-install-recommends \
+     bnxt-rocelib=235.2.86.0 \
+   ; \
+   cp -a /usr/local/lib/x86_64-linux-gnu/libbnxt_re* /usr/local/lib/ || true; \
+   ldconfig; \
+   rm -rf /var/lib/apt/lists/*; \
+ }; \
+ \
+ echo "[MORI] Install MoRI proxy deps"; \
+ pip install --quiet --ignore-installed blinker && \
+ pip install --quiet quart msgpack aiohttp pyzmq; \
+ echo "[MORI] NIC_BACKEND=${NIC_BACKEND}"; \
+ echo "[MORI] AINIC_VERSION=${AINIC_VERSION}"; \
+ \
+ case "${NIC_BACKEND}" in \
+   none)  ;; \
+   all)   install_ainic; install_bnxt ;; \
+   ainic) install_ainic ;; \
+   bnxt)  install_bnxt ;; \
+   *)     echo "ERROR: unknown NIC_BACKEND=${NIC_BACKEND}. Use one of: none, ainic, bnxt, all"; exit 2 ;; \
+ esac'
+
+ENV MORI_NIC_BACKEND=${NIC_BACKEND}
+ENV AINIC_VERSION=${AINIC_VERSION}
+
+###############################################################################
+# Fetch vLLM source (ScalarLM local/remote copy)
+FROM mori_base AS fetch_vllm
+
+ARG COMMON_WORKDIR
+ARG INSTALL_ROOT=/app/cray
+ARG VLLM_SOURCE=remote
+ARG VLLM_BRANCH=main
+ARG VLLM_REPO=https://github.com/supermassive-intelligence/vllm-fork.git
+
+COPY scripts/build-copy-vllm.sh ${INSTALL_ROOT}/build-copy-vllm.sh
+
+RUN --mount=type=bind,source=./vllm,target=/workspace/vllm,rw \
+    bash ${INSTALL_ROOT}/build-copy-vllm.sh ${VLLM_SOURCE} ${COMMON_WORKDIR}/vllm \
+    /workspace/vllm ${VLLM_REPO} ${VLLM_BRANCH}
+
+###############################################################################
+# Build vLLM wheel (upstream Dockerfile.rocm build_vllm).
+# Rust frontend (build_rust.sh) is optional: ScalarLM vllm-fork may not ship it.
+FROM fetch_vllm AS build_vllm
+
+ARG COMMON_WORKDIR
+
+COPY scripts/install_protoc.sh /tmp/install_protoc.sh
+
+RUN cd ${COMMON_WORKDIR}/vllm \
+    && if [ -f build_rust.sh ] && [ -f rust-toolchain.toml ] && [ -f rust/Cargo.toml ]; then \
+        echo "Building vllm-rs Rust frontend" \
+        && apt-get update -q -y \
+        && apt-get install -y --no-install-recommends ca-certificates curl unzip \
+        && rm -rf /var/lib/apt/lists/* \
+        && chmod +x /tmp/install_protoc.sh && /tmp/install_protoc.sh && rm -f /tmp/install_protoc.sh \
+        && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none \
+        ; else \
+        echo "Skipping vllm-rs prebuild (no build_rust.sh in fetched vLLM source)"; \
+    fi
+
+ENV PATH="/root/.cargo/bin:${PATH}"
+ENV CARGO_BUILD_JOBS=4
+ENV CARGO_NET_RETRY=10
+ENV RUSTUP_MAX_RETRIES=10
+
+RUN --mount=type=cache,id=vllm-rocm-cargo-registry,target=/root/.cargo/registry,sharing=locked \
+    --mount=type=cache,id=vllm-rocm-cargo-git,target=/root/.cargo/git,sharing=locked \
+    cd ${COMMON_WORKDIR}/vllm \
+    && if [ -f build_rust.sh ] && [ -f rust-toolchain.toml ]; then \
+        VLLM_RS_TARGET_PATH=${COMMON_WORKDIR}/vllm/vllm/vllm-rs bash build_rust.sh \
+        && test -x ${COMMON_WORKDIR}/vllm/vllm/vllm-rs; \
+    fi
+
+RUN --mount=type=cache,target=/root/.cache/pip \
+    cd ${COMMON_WORKDIR}/vllm \
+    && if [ -f use_existing_torch.py ]; then python use_existing_torch.py; fi \
+    && python -m pip install -r requirements/rocm.txt \
+    && python setup.py clean --all \
+    && python setup.py bdist_wheel --dist-dir=dist
+
+FROM scratch AS export_vllm
+ARG COMMON_WORKDIR
+COPY --from=build_vllm ${COMMON_WORKDIR}/vllm/dist/*.whl /
+COPY --from=build_vllm ${COMMON_WORKDIR}/vllm/requirements /requirements
+COPY --from=build_vllm ${COMMON_WORKDIR}/vllm/benchmarks /benchmarks
+COPY --from=build_vllm ${COMMON_WORKDIR}/vllm/tests /tests
+COPY --from=build_vllm ${COMMON_WORKDIR}/vllm/examples /examples
+COPY --from=build_vllm ${COMMON_WORKDIR}/vllm/docker/Dockerfile.rocm /docker/
+COPY --from=build_vllm ${COMMON_WORKDIR}/vllm/.buildkite /.buildkite
+COPY --from=build_vllm ${COMMON_WORKDIR}/vllm/vllm/v1 /vllm_v1
+
+###############################################################################
+# RIXL / UCX for ROCm RDMA (upstream Dockerfile.rocm build_rixl)
+FROM vllm_base AS build_rixl
+
+ARG RIXL_BRANCH="39be1de8"
+ARG RIXL_REPO="https://github.com/ROCm/RIXL.git"
+ARG UCX_BRANCH="bfb51733"
+ARG UCX_REPO="https://github.com/openucx/ucx.git"
+ENV ROCM_PATH=/opt/rocm
+ENV UCX_HOME=/usr/local/ucx
+ENV RIXL_HOME=/usr/local/rixl
+
+RUN apt-get -y update && apt-get -y install --no-install-recommends \
+    autoconf libtool pkg-config \
+    libgrpc-dev libgrpc++-dev libprotobuf-dev protobuf-compiler-grpc \
+    libcpprest-dev libaio-dev \
+    librdmacm1 librdmacm-dev libibverbs1 libibverbs-dev \
+    ibverbs-utils rdmacm-utils ibverbs-providers \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN cd /usr/local/src && \
+    git clone ${UCX_REPO} && \
+    cd ucx && \
+    git checkout ${UCX_BRANCH} && \
+    ./autogen.sh && \
+    mkdir build && cd build && \
+    ../configure \
+        --prefix=/usr/local/ucx \
+        --enable-shared \
+        --disable-static \
+        --disable-doxygen-doc \
+        --enable-optimizations \
+        --enable-devel-headers \
+        --with-rocm=${ROCM_PATH} \
+        --with-verbs \
+        --with-dm \
+        --enable-mt && \
+    make -j && \
+    make install
+
+ENV PATH=/usr/local/ucx/bin:$PATH
+ENV LD_LIBRARY_PATH=${UCX_HOME}/lib:${LD_LIBRARY_PATH}
+
+# Ubuntu absl (from gRPC) is too old for RIXL; purge so meson uses the abseil-cpp subproject.
+RUN apt-get -y update \
+    && apt-get purge -y 'libabsl*' || true \
+    && apt-get autoremove -y --purge \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN git clone ${RIXL_REPO} /opt/rixl && \
+    cd /opt/rixl && \
+    git checkout ${RIXL_BRANCH} && \
+    meson setup build --prefix=${RIXL_HOME} \
+                     -Ducx_path=${UCX_HOME} \
+                     -Drocm_path=${ROCM_PATH} && \
+    cd build && \
+    ninja && \
+    ninja install
+
+RUN cd /opt/rixl && \
+    sed -i "s/--exclude 'libamdhip64\*'/--exclude 'libamdhip64*' --exclude 'libcore*' --exclude 'libpull*'/" \
+        contrib/build-wheel.sh && \
+    mkdir -p /app/install && \
+    _ucx_install_dir=${UCX_HOME} \
+    ./contrib/build-wheel.sh \
+        --output-dir /app/install \
+        --rocm-dir ${ROCM_PATH} \
+        --ucx-plugins-dir ${UCX_HOME}/lib/ucx \
+        --nixl-plugins-dir ${RIXL_HOME}/lib/x86_64-linux-gnu/plugins
+
+###############################################################################
+# Install vLLM + RIXL runtime (upstream `final`, with MoRI NIC backends)
+FROM mori_base AS vllm_ready
+
+ARG COMMON_WORKDIR
+ARG NIC_BACKEND=all
+ARG AINIC_VERSION=1.117.5-a-77
+ENV ROCM_PATH=/opt/rocm
+ENV UCX_HOME=/usr/local/ucx
+ENV RIXL_HOME=/usr/local/rixl
+ENV PATH=/usr/local/ucx/bin:${PATH}
+ENV LD_LIBRARY_PATH=${UCX_HOME}/lib:${RIXL_HOME}/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH}
+
+RUN --mount=type=bind,from=export_vllm,src=/,target=/install \
+    --mount=type=cache,target=/root/.cache/uv \
+    cd /install \
+    && uv pip install -r requirements/rocm.txt \
+    && pip uninstall -y vllm || true \
+    && uv pip install *.whl
+
+RUN --mount=type=bind,from=build_rixl,src=/app/install,target=/rixl_install \
+    uv pip install /rixl_install/*.whl
+
+RUN apt-get update -q -y && apt-get install -y --no-install-recommends \
+    librdmacm1 libibverbs1 ibverbs-providers ibverbs-utils \
+    ffmpeg libsm6 libxext6 libgl1 libdnnl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# vLLM dependencies
+COPY ./infra/requirements-vllm.txt ${INSTALL_ROOT}/requirements-vllm.txt
+RUN uv pip install --no-compile --no-cache-dir -r ${INSTALL_ROOT}/requirements-vllm.txt 
+
+COPY --from=build_vllm ${COMMON_WORKDIR}/vllm ${COMMON_WORKDIR}/vllm
+
+ENV HSA_ENABLE_IPC_MODE_LEGACY=1
+ENV TOKENIZERS_PARALLELISM=false
+ENV SAFETENSORS_FAST_GPU=1
+ENV VLLM_TARGET_DEVICE=rocm
+ENV MORI_NIC_BACKEND=${NIC_BACKEND}
+ENV AINIC_VERSION=${AINIC_VERSION}
+
+###############################################################################
+# FRONTEND BUILD STAGE
+FROM vllm_ready AS ui_base
+
+RUN apt-get update -y && \
+    apt-get install -y git curl libgomp1 libcurl4 dnsutils nano
+
+RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - && \
+    apt-get install -y nodejs && \
+    node --version && \
+    npm --version
+
+ARG INSTALL_ROOT=/app
+WORKDIR /app
+
+ARG UI_SOURCE=remote
+ARG UI_BRANCH=main
+ARG UI_REPO=https://github.com/supermassive-intelligence/chat-ui-fork.git
+
+COPY scripts/build-copy-chat-ui.sh ${INSTALL_ROOT}/build-copy-chat-ui.sh
+
+RUN --mount=type=bind,source=./chat-ui,target=/workspace/chat-ui,rw \
+    bash ${INSTALL_ROOT}/build-copy-chat-ui.sh ${UI_SOURCE} ${INSTALL_ROOT}/chat-ui \
+    /workspace/chat-ui ${UI_REPO} ${UI_BRANCH}
+
+RUN npm install -g dotenv-cli
+
+USER root
+
+RUN mkdir -p /app/ui && \
+    touch /app/ui/.env.local && \
+    cp ${INSTALL_ROOT}/chat-ui/.env /app/ui/.env && \
+    cp ${INSTALL_ROOT}/chat-ui/entrypoint.sh /app/ui/entrypoint.sh && \
+    cp ${INSTALL_ROOT}/chat-ui/package.json /app/ui/package.json && \
+    cp ${INSTALL_ROOT}/chat-ui/package-lock.json /app/ui/package-lock.json && \
+    chmod +x /app/ui/entrypoint.sh
+
+FROM node:24.2.0 AS ui_builder
+
+WORKDIR /app
+ARG INSTALL_ROOT=/temp
+
+USER root
+RUN apt-get update -y && apt-get install -y git
+
+ARG UI_SOURCE=remote
+ARG UI_BRANCH=main
+ARG UI_REPO=https://github.com/supermassive-intelligence/chat-ui-fork.git
+
+COPY scripts/build-copy-chat-ui.sh ${INSTALL_ROOT}/build-copy-chat-ui.sh
+
+RUN --mount=type=bind,source=./chat-ui,target=/workspace/chat-ui,rw \
+    bash ${INSTALL_ROOT}/build-copy-chat-ui.sh ${UI_SOURCE} ${INSTALL_ROOT}/chat-ui \
+    /workspace/chat-ui ${UI_REPO} ${UI_BRANCH}
+
+RUN cp ${INSTALL_ROOT}/chat-ui/package-lock.json ${INSTALL_ROOT}/chat-ui/package.json ./
+
+ARG APP_BASE=/chat
+ARG PUBLIC_APP_COLOR=
+ENV BODY_SIZE_LIMIT=15728640
+
+RUN --mount=type=cache,target=/app/.npm \
+    npm set cache /app/.npm && \
+    npm ci
+
+RUN cp -R ${INSTALL_ROOT}/chat-ui/. /app/ && \
+    npm install -D @sveltejs/adapter-static
+
+RUN git config --global --add safe.directory /app && \
+    npm run build
+
+FROM mongo:7 AS mongo
+
+FROM ui_base AS local_db
+
+COPY --from=mongo /usr/bin/mongo* /usr/bin/
+
+ENV MONGODB_URL=mongodb://localhost:27017
+USER root
+RUN mkdir -p /data/db
+
+FROM local_db AS ui_final
+
+ENV INCLUDE_DB=true
+
+ARG APP_BASE=/chat
+ARG PUBLIC_APP_COLOR=
+ARG PUBLIC_COMMIT_SHA=
+ENV PUBLIC_COMMIT_SHA=${PUBLIC_COMMIT_SHA}
+ENV BODY_SIZE_LIMIT=15728640
+
+COPY --from=ui_builder /app/build /app/build
+COPY --from=ui_builder /app/node_modules /app/node_modules
+COPY frontend/entrypoint.sh /app/ui/entrypoint.sh
+COPY frontend/.env.local /app/ui/.env.local
+
+###############################################################################
+# MAIN IMAGE
+FROM ui_final AS infra
+
+COPY --from=ui_final --chown=1000 /app /app/ui
+COPY --from=ui_final /usr/bin/mongo* /usr/bin/
+
+ENV MONGODB_URL=mongodb://localhost:27017
+ENV INCLUDE_DB=true
+
+ARG INSTALL_ROOT=/app/cray
+ARG VLLM_TARGET_DEVICE=rocm
+ENV VLLM_TARGET_DEVICE=${VLLM_TARGET_DEVICE}
+
+RUN apt-get update -y  \
+    && apt-get install -y build-essential \
+    less curl wget net-tools vim iputils-ping strace gdb python3-dbg python3-dev \
+    dmidecode \
+    slurm-wlm libslurm-dev \
+    numactl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR ${INSTALL_ROOT}
+
+ENV INSTALL_ROOT=${INSTALL_ROOT}
+ENV PYTHONPATH="${INSTALL_ROOT}/infra:${INSTALL_ROOT}/sdk:${INSTALL_ROOT}/ml:${INSTALL_ROOT}/test:${INSTALL_ROOT}/vllm:${INSTALL_ROOT}"
+
+COPY ./infra/requirements-megatron.txt ${INSTALL_ROOT}/requirements-megatron.txt
+COPY ./infra/requirements-megatron-cpu.txt ${INSTALL_ROOT}/requirements-megatron-cpu.txt
+COPY ./requirements.txt ${INSTALL_ROOT}/requirements.txt
+
+RUN uv pip install --no-deps --no-compile --no-cache-dir torchao==0.17.0 \
+    && if [ "$VLLM_TARGET_DEVICE" != "cpu" ]; then \
+        uv pip install --no-deps --no-compile --no-cache-dir -r ${INSTALL_ROOT}/requirements-megatron.txt; \
+    fi && \
+    if [ "$VLLM_TARGET_DEVICE" != "cuda" ]; then \
+        uv pip install --no-compile --no-cache-dir -r ${INSTALL_ROOT}/requirements-megatron-cpu.txt; \
+    fi && \
+    uv pip install --no-compile --no-cache-dir -r ${INSTALL_ROOT}/requirements.txt
+
+RUN mkdir -p ${INSTALL_ROOT}/jobs ${INSTALL_ROOT}/nfs
+
+COPY ./infra ${INSTALL_ROOT}/infra
+COPY ./sdk ${INSTALL_ROOT}/sdk
+COPY ./test ${INSTALL_ROOT}/test
+COPY ./ml ${INSTALL_ROOT}/ml
+COPY ./scripts ${INSTALL_ROOT}/scripts
+
+RUN uv pip install --no-compile --no-cache-dir -r ${INSTALL_ROOT}/test/requirements-pytest.txt
+
+WORKDIR ${INSTALL_ROOT}
+
+RUN /app/cray/infra/slurm_src/compile.sh
+
+ENV LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-}:${INSTALL_ROOT}/infra:${INSTALL_ROOT}/sdk:${INSTALL_ROOT}/ml:${INSTALL_ROOT}/test:${INSTALL_ROOT}/vllm:/usr/local/lib/slurm
+ENV SLURM_CONF=${INSTALL_ROOT}/nfs/slurm.conf
+ENV VLLM_CPU_MOE_PREPACK=0

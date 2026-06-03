@@ -49,6 +49,9 @@ async def train(request: Request):
             detail="Invalid request body",
         )
 
+    if job_config.get("retry") or job_config.get("force_resubmit"):
+        logger.info("Training resubmit requested (retry=true)")
+
     job_status = await launch_training_job(job_config)
 
     return TrainResponse(job_status=job_status, job_config=job_config, deployed=False)

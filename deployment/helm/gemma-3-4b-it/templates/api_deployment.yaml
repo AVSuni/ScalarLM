@@ -1,0 +1,138 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "scalarlm.fullname" . }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "scalarlm.labels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "scalarlm.labels" . | nindent 8 }}
+    spec:
+    {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+    {{- end }}
+      hostname: {{ include "scalarlm.fullname" . }}
+      dnsConfig:
+        searches:
+          - {{ include "scalarlm.megatronname" . }}-headless.{{ .Release.Namespace }}.svc.cluster.local
+          - "{{ .Release.Namespace }}.svc.cluster.local"
+          - "svc.cluster.local"
+          - "cluster.local"
+        options:
+          - name: ndots
+            value: "1"
+      {{- include "scalarlm.scheduling" . | nindent 6 }}
+      containers:
+        - name: {{ .Chart.Name }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/app/cray/scripts/start_one_server.sh"]
+          env:
+            # UCX configuration for Ionic (no SRQ or RC support)
+            - name: UCX_UD_ETH_DGID_CHECK
+              value: "n"
+            - name: UCX_TLS
+              value: "rc_verbs,ud_verbs,tcp,rocm,self"
+            - name: UCX_NET_DEVICES
+              value: "eth0"
+            - name: UCX_IB_GID_INDEX
+              value: "1"
+            - name: UCX_LOG_LEVEL
+              value: "info"
+            - name: UCX_WARN_UNUSED_ENV_VARS
+              value: "n"
+            - name: UCX_IB_USE_SRQ
+              value: "n"
+            - name: UCX_SOCKADDR_TLS_PRIORITY
+              value: "tcp"
+            - name: UCX_RC_ENABLE
+              value: "n"
+            # Ensure TCP is used for rendezvous
+            - name: UCX_RNDV_SCHEME
+              value: "put_zcopy"
+            - name: UCX_RNDV_THRESH
+              value: "inf"
+            - name: UCX_ZCOPY_THRESH
+              value: "inf"
+            - name: UCX_IB_REG_METHODS
+              value: "rcache"
+            - name: UCX_RCACHE_ENABLE
+              value: "n"
+            # MPI configuration
+            - name: OMPI_MCA_pml
+              value: "ucx"
+            - name: OMPI_MCA_btl
+              value: "^vader,openib,uct"
+            - name: OMPI_MCA_oob_tcp_if_include
+              value: "eth0"
+            - name: UCX_TCP_RX_SEG_SIZE
+              value: "16m"
+            - name: UCX_TCP_TX_SEG_SIZE
+              value: "16m"
+            - name: UCX_TCP_SNDBUF
+              value: "16m"
+            - name: UCX_TCP_RCVBUF
+              value: "16m"
+            - name: UCX_SOCKADDR_CM_ENABLE
+              value: "n"
+            - name: UCX_TCP_NODELAY
+              value: "y"
+            - name: UCX_TCP_PREFER_DEFAULT
+              value: "n"
+            - name: UCX_TCP_MAX_IOV
+              value: "1024"
+            - name: UCX_TCP_SENDV_THRESH
+              value: "16777216"
+            - name: UCX_MM_SEG_SIZE
+              value: "32m"
+            - name: UCX_NUM_EPS
+              value: "auto"
+            - name: UCX_NUM_PPS
+              value: "auto"
+            - name: OMPI_MCA_btl_tcp_eager_limit
+              value: "16777216"
+            - name: OMPI_MCA_btl_tcp_max_send_size
+              value: "16777216"
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.api_port }}
+              hostPort: {{ .Values.service.api_port }}
+              protocol: TCP
+          volumeMounts:
+          {{- range .Values.volumes }}
+            - name: {{ .name }}
+              mountPath: {{ .path }}
+          {{- end }}
+            - name: scalarlm-config
+              mountPath: /app/cray/cray-config.yaml
+              subPath: cray-config.yaml
+            - name: scalarlm-jobs
+              mountPath: /app/cray/jobs
+            - name: scalarlm-cache
+              mountPath: /root/.cache/huggingface
+            - name: scalarlm-slurm-config
+              mountPath: /app/cray/nfs
+      volumes:
+        - name: scalarlm-jobs
+          persistentVolumeClaim:
+            claimName: scalarlm-jobs
+        - name: scalarlm-cache
+          persistentVolumeClaim:
+            claimName: scalarlm-cache
+        - name: scalarlm-slurm-config
+          persistentVolumeClaim:
+            claimName: scalarlm-slurm-config
+        - name: scalarlm-config
+          configMap:
+            name: {{ .Release.Name }}-api-configmap
+      {{- range .Values.volumes }}
+        - name: {{ .name }}
+          hostPath:
+            path: {{ .hostPath }}
+      {{- end }}
+

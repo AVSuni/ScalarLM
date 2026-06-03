@@ -33,6 +33,10 @@ class Config(BaseModel):
 
     megatron_refresh_period: int = 30 # seconds
 
+    max_job_restart_count: int = 3
+    job_restart_cooldown_seconds: int = 300
+    training_heartbeat_seconds: int = 600
+
     vllm_api_url: str = "http://localhost:8001"
 
     # vLLM Engine Configuration

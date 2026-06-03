@@ -1,4 +1,10 @@
 from cray_infra.util.get_config import get_config
+from cray_infra.training.slurm_jobs import (
+    cancel_slurm_jobs_for_train_args,
+    get_job_name,
+    is_slurm_job_active_for_train_args,
+    job_should_block_resubmit,
+)
 
 import json
 import os
@@ -18,8 +24,23 @@ logger = logging.getLogger(__name__)
 async def launch_training_job(train_args: Dict):
     await wait_for_slurm()
 
-    if job_already_exists(train_args):
-        logging.info(f"Job already exists: {train_args['job_directory']}")
+    force_retry = bool(
+        train_args.get("retry") or train_args.get("force_resubmit")
+    )
+
+    if force_retry:
+        cancel_slurm_jobs_for_train_args(train_args)
+        _clear_status_for_retry(train_args)
+
+    if job_already_exists(train_args, force_retry=force_retry):
+        logging.info(f"Job already active: {train_args['job_directory']}")
+        return get_existing_job_info(train_args)
+
+    if is_slurm_job_active_for_train_args(train_args):
+        logging.info(
+            "SLURM job already queued/running for %s",
+            get_job_name(train_args),
+        )
         return get_existing_job_info(train_args)
 
     make_training_directory(train_args)
@@ -43,12 +64,32 @@ async def wait_for_slurm():
             time.sleep(1)
 
 
-def job_already_exists(train_args: Dict):
-    config = get_config()
+def _load_job_status(train_args: Dict):
+    status_path = os.path.join(train_args["job_directory"], "status.json")
+    if not os.path.exists(status_path):
+        return None
+    try:
+        with open(status_path, "r") as f:
+            return json.load(f)
+    except json.JSONDecodeError:
+        return None
 
-    train_args_path = os.path.join(train_args["job_directory"], "status.json")
 
-    return os.path.exists(train_args_path)
+def _clear_status_for_retry(train_args: Dict) -> None:
+    status_path = os.path.join(train_args["job_directory"], "status.json")
+    if os.path.exists(status_path):
+        os.remove(status_path)
+
+
+def job_already_exists(train_args: Dict, force_retry: bool = False):
+    if force_retry:
+        return False
+
+    status = _load_job_status(train_args)
+    if status is None:
+        return False
+
+    return job_should_block_resubmit(status, get_job_name(train_args))
 
 
 def make_training_directory(train_args: Dict):
@@ -70,6 +111,13 @@ def get_training_job_directory(train_args: Dict):
 
 
 def start_slurm_job(train_args):
+    if is_slurm_job_active_for_train_args(train_args):
+        logger.info(
+            "Skipping sbatch; SLURM job already active for %s",
+            get_job_name(train_args),
+        )
+        return
+
     run_command = create_slurm_run_command(train_args)
 
     run_sbatch(run_command, train_args)
@@ -89,6 +137,8 @@ def create_slurm_run_command(train_args):
     node_count = get_node_count(train_args)
     run_command += [f"--nodes={node_count}"]
     logger.info(f"node_count: {node_count}")
+
+    run_command += ["--exclusive"]
 
     cpu_per_task = get_cpu_per_task(train_args)
     run_command += [f"--cpus-per-task={cpu_per_task}"]
@@ -266,23 +316,38 @@ def run_sbatch(run_command, train_args):
         env=clean_environs,
     )
 
-    if result.returncode != 0:
-        result_output = result.stdout.decode("utf-8") + result.stderr.decode("utf-8")
-        write_job_status("FAILED", train_args, {"output": result_output})
+    stdout_text = result.stdout.decode("utf-8")
+    stderr_text = result.stderr.decode("utf-8")
 
-    job_id = get_job_id_from_sbatch_output(result.stdout.decode("utf-8"))
+    if result.returncode != 0:
+        result_output = stdout_text + stderr_text
+        write_job_status("FAILED", train_args, {"output": result_output})
+        return
+
+    job_id = get_job_id_from_sbatch_output(stdout_text)
+    if job_id is None:
+        write_job_status(
+            "FAILED",
+            train_args,
+            {"output": stdout_text + stderr_text, "error": "Could not parse sbatch job id"},
+        )
+        return
 
     write_job_status("QUEUED", train_args, {"job_id": job_id})
 
 
 def get_job_id_from_sbatch_output(sbatch_output):
     logger.info(f"sbatch_output: {sbatch_output}")
-    return re.search(r"Submitted batch job (\d+)", sbatch_output).group(1)
+    match = re.search(r"Submitted batch job (\d+)", sbatch_output)
+    if not match:
+        return None
+    return match.group(1)
 
 
 def write_job_status(status, train_args, extra_info):
     job_status = {
         "status": status,
+        "last_updated": time.time(),
         **extra_info,
     }
 

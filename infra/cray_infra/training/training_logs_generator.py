@@ -23,15 +23,14 @@ def training_logs_generator(model_name: str, starting_line_number: int):
 
     job_directory = get_job_directory_for_hash(model_name)
 
-    # Find the log file inside the job directory, it will be named "slurm-<job_id>.out, but we don't know the job_id yet
     log_files = []
 
     for file in os.listdir(job_directory):
         if file.startswith("slurm-") and file.endswith(".out"):
-            log_file = os.path.join(job_directory, file)
-            log_files.append(log_file)
+            log_files.append(os.path.join(job_directory, file))
+        elif file.startswith("rank-") and file.endswith(".log"):
+            log_files.append(os.path.join(job_directory, file))
 
-    # sort the log files by name
     log_files.sort()
 
     logger.info(f"Found log files: {log_files}")

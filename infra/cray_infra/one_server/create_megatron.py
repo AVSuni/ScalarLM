@@ -37,9 +37,8 @@ async def add_megatron_tasks(app):
     async def run_megatron_tasks():
         try:
             await register_megatron_workers()
-        except Exception as e:
+        except Exception:
             print_exception()
-            raise e
 
     await run_megatron_tasks()
 

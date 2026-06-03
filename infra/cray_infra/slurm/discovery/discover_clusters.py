@@ -9,6 +9,7 @@ import time
 import socket
 import os
 import json
+import shutil
 
 import logging
 
@@ -29,17 +30,27 @@ def main():
     discover_clusters()
 
 
-def discover_clusters():
+def discover_clusters(quiet: bool = False):
 
     clean_old_node_info()
 
+    if not should_register_node():
+        if not quiet:
+            logger.info(
+                "Skipping cluster registration on %s (not a megatron training node)",
+                get_hostname(),
+            )
+        return
+
     node_info = get_node_info()
 
-    save_node_info(node_info)
+    if not save_node_info(node_info, quiet=quiet):
+        if quiet:
+            return
 
-    cluster_info = get_cluster_info(node_info)
+    cluster_info = get_cluster_info(node_info, quiet=quiet)
 
-    save_cluster_info(cluster_info)
+    save_cluster_info(cluster_info, quiet=quiet)
 
 
 def setup_logging():
@@ -86,20 +97,42 @@ def get_node_info():
 
 
 def get_machine_id():
-    machine_id = None
-    try:
-        return get_board_serial()
-    except Exception as e:
-        logger.error(f"Error reading machine ID: {e}")
-    return machine_id
+    serial = get_board_serial()
+    if serial:
+        return serial
+    return get_hostname()
 
 
 def get_board_serial() -> str | None:
+    if shutil.which("dmidecode") is None:
+        return None
+
+    if not os.access("/dev/mem", os.R_OK):
+        return None
+
     result = subprocess.run(
-        ["dmidecode", "-s", "baseboard-serial-number"], capture_output=True, text=True
+        ["dmidecode", "-s", "baseboard-serial-number"],
+        capture_output=True,
+        text=True,
     )
+    if result.returncode != 0:
+        return None
     serial = result.stdout.strip()
     return serial if serial else None
+
+
+def should_register_node() -> bool:
+    hostname = get_hostname()
+    if "megatron" in hostname:
+        return True
+
+    config = get_config()
+    server_list = config.get("server_list", "")
+    return "megatron" in server_list or server_list == "all"
+
+
+def is_training_node(hostname: str) -> bool:
+    return "megatron" in hostname
 
 
 def get_hostname():
@@ -114,25 +147,37 @@ def get_gpu_count():
     gpu_count = 0
     if torch.cuda.is_available():
         gpu_count = torch.cuda.device_count()
+    if gpu_count == 0:
+        gpu_count = len(get_gpu_indexes())
     return gpu_count
 
 
-def save_node_info(node_info):
+def save_node_info(node_info, quiet: bool = False) -> bool:
     node_config_path = os.path.join(
         shared_node_config_directory, f"{node_info['hostname']}.json"
     )
 
     os.makedirs(shared_node_config_directory, exist_ok=True)
 
+    if os.path.exists(node_config_path):
+        with open(node_config_path, "r") as f:
+            existing = json.load(f)
+        if existing == node_info:
+            return False
+
     with open(node_config_path, "w") as f:
         json.dump(node_info, f, indent=4)
 
+    if not quiet:
+        logger.info("Updated node registration for %s", node_info["hostname"])
+    return True
 
-def get_cluster_info(node_info):
+
+def get_cluster_info(node_info, quiet: bool = False):
 
     all_nodes = load_all_nodes()
 
-    controller_info = elect_controller(all_nodes)
+    controller_info = elect_controller(all_nodes, quiet=quiet)
 
     return {
         "controller_info": controller_info,
@@ -143,16 +188,20 @@ def get_cluster_info(node_info):
 
 def load_all_nodes():
     all_nodes = []
+    if not os.path.exists(shared_node_config_directory):
+        return all_nodes
+
     for filename in os.listdir(shared_node_config_directory):
         if filename.endswith(".json"):
             file_path = os.path.join(shared_node_config_directory, filename)
             with open(file_path, "r") as f:
                 node_info = json.load(f)
-                all_nodes.append(node_info)
+                if is_training_node(node_info["hostname"]):
+                    all_nodes.append(node_info)
     return all_nodes
 
 
-def elect_controller(all_nodes):
+def elect_controller(all_nodes, quiet: bool = False):
     """
     Elects the controller node based on the lowest GPU count.
     If multiple nodes have the same CPU count, alphabetical order of hostname is used.
@@ -166,9 +215,12 @@ def elect_controller(all_nodes):
     # The first node in the sorted list is the controller
     controller_node = all_nodes[0]
 
-    logger.info(
-        f"Controller node elected: {controller_node['hostname']} with {controller_node['gpu_count']} GPUs"
-    )
+    if not quiet:
+        logger.info(
+            "Controller node elected: %s with %s GPUs",
+            controller_node["hostname"],
+            controller_node["gpu_count"],
+        )
 
     return controller_node
 
@@ -178,12 +230,13 @@ def is_controller(node_info, controller_info):
     return is_controller
 
 
-def save_cluster_info(cluster_info):
+def save_cluster_info(cluster_info, quiet: bool = False):
     old_cluster_info = load_cluster_info_file()
 
     if old_cluster_info:
         if old_cluster_info == cluster_info:
-            logger.info("Cluster info is unchanged, skipping write.")
+            if not quiet:
+                logger.info("Cluster info is unchanged, skipping write.")
             return
 
     write_slurm_config(cluster_info)
@@ -191,6 +244,9 @@ def save_cluster_info(cluster_info):
     write_cgroup_config(cluster_info)
     write_cluster_info_file(cluster_info)
     reload_slurm_configs()
+
+    if not quiet:
+        logger.info("Cluster info updated and Slurm configs reloaded.")
 
 
 def load_cluster_info_file():
@@ -348,8 +404,7 @@ def get_gpu_indexes():
                 try:
                     index_str = file[len(card_name) :]
                     if index_str.isdigit():
-                        print(file[len(card_name) :])
-                        index_as_int = int(file[len(card_name) :])
+                        index_as_int = int(index_str)
                         indexes.append(index_as_int)
                 except Exception as e:
                     continue

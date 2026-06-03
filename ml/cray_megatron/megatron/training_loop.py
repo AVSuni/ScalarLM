@@ -20,9 +20,18 @@ import torch
 
 import time
 import logging
-from cray_infra.training.distributed import allreduce, get_size
+import os
+import sys
+from cray_infra.training.distributed import allreduce, get_rank, get_size
 
 logger = logging.getLogger(__name__)
+
+
+def _trace_loop(msg: str) -> None:
+    rank = os.environ.get("RANK", os.environ.get("SLURM_PROCID", "?"))
+    line = f"[rank={rank}] training_loop [{time.monotonic():.3f}]: {msg}\n"
+    sys.stderr.write(line)
+    sys.stderr.flush()
 
 
 class TrainingLoop:
@@ -34,13 +43,20 @@ class TrainingLoop:
         self.training_state = TrainingState()
 
     def train(self):
+        _trace_loop("train() enter")
+        _trace_loop("train() calling get_model_manager")
         self.model_manager = get_model_manager()
-
+        _trace_loop("train() calling load_model")
         self.training_state.model_info = self.model_manager.load_model()
+        _trace_loop("train() load_model complete")
 
+        _trace_loop("train() calling training_loop()")
         self.training_loop()
+        _trace_loop("train() training_loop complete")
 
+        _trace_loop("train() calling checkpoint()")
         self.checkpoint()
+        _trace_loop("train() complete")
 
     def training_loop(self):
         self.on_train_begin()
@@ -192,8 +208,8 @@ class TrainingLoop:
         if not is_nan:
             scaled_loss.backward()
 
-        # Log info for each micro-batch
-        self.print_microbatch_info(accum_step, avg_loss, start_time)
+        if gradient_accumulation_steps > 1:
+            self.print_microbatch_info(accum_step, avg_loss, start_time)
 
         return avg_loss
 
@@ -312,10 +328,8 @@ class TrainingLoop:
             f"- step time {step_time:.3f} seconds"
         )
 
-    @main_rank_only
     def print_microbatch_info(self, accum_step, loss, start_time):
-        # only log if there is more than one microbatch
-        if get_gradient_accumulation_steps() <= 1:
+        if get_rank() != 0:
             return
 
         logger.debug(
@@ -390,7 +404,7 @@ def get_max_steps():
 
 def get_gradient_accumulation_steps():
     job_config = get_job_config()
-    return job_config.get("gradient_accumulation_steps", 4)
+    return job_config.get("gradient_accumulation_steps", 1)
 
 
 def get_optimizer(model):

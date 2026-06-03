@@ -280,12 +280,13 @@ ARG INSTALL_ROOT=/app/cray
 RUN apt-get update -y  \
     && apt-get install -y build-essential \
     less curl wget net-tools vim iputils-ping strace gdb python3-dbg python3-dev \
+    dmidecode \
     slurm-wlm libslurm-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Setup python path
 ENV INSTALL_ROOT=${INSTALL_ROOT}
-ENV PYTHONPATH="${INSTALL_ROOT}/infra:${INSTALL_ROOT}/sdk:${INSTALL_ROOT}/ml:${INSTALL_ROOT}/test:${INSTALL_ROOT}/vllm"
+ENV PYTHONPATH="${INSTALL_ROOT}/infra:${INSTALL_ROOT}/sdk:${INSTALL_ROOT}/ml:${INSTALL_ROOT}/test:${INSTALL_ROOT}/vllm:${INSTALL_ROOT}"
 
 # Megatron dependencies (GPU only)
 # note this has to happen after vllm because it overrides some packages installed by vllm
@@ -293,7 +294,8 @@ COPY ./infra/requirements-megatron.txt ${INSTALL_ROOT}/requirements-megatron.txt
 COPY ./infra/requirements-megatron-cpu.txt ${INSTALL_ROOT}/requirements-megatron-cpu.txt
 COPY ./requirements.txt ${INSTALL_ROOT}/requirements.txt
 
-RUN if [ "$VLLM_TARGET_DEVICE" != "cpu" ]; then \
+RUN uv pip install --no-deps --no-compile --no-cache-dir torchao==0.17.0 \
+    && if [ "$VLLM_TARGET_DEVICE" != "cpu" ]; then \
         uv pip install --no-deps --no-compile --no-cache-dir -r ${INSTALL_ROOT}/requirements-megatron.txt; \
     fi && \
     if [ "$VLLM_TARGET_DEVICE" != "cuda" ]; then \

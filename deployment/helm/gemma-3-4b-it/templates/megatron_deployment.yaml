@@ -1,0 +1,217 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "scalarlm.megatronname" . }}
+spec:
+  serviceName: {{ include "scalarlm.megatronname" . }}-headless
+  replicas: {{ .Values.training_gpus }}
+  selector:
+    matchLabels:
+      {{- include "scalarlm.megatronlabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations: 
+        k8s.v1.cni.cncf.io/networks: kube-amd-network/amd-host-device-sbr-nad
+      labels:
+        {{- include "scalarlm.megatronlabels" . | nindent 8 }}
+    spec:
+      hostNetwork: false
+        #hostPID: true
+    {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+    {{- end }}
+      dnsConfig:
+        searches:
+          - {{ include "scalarlm.megatronname" . }}-headless.{{ .Release.Namespace }}.svc.cluster.local
+          - "{{ .Release.Namespace }}.svc.cluster.local"
+          - "svc.cluster.local"
+          - "cluster.local"
+        options:
+          - name: ndots
+            value: "1"
+      {{- include "scalarlm.scheduling" . | nindent 6 }}
+      containers:
+        - name: {{ .Chart.Name }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+            #securityContext:
+            #privileged: true  
+            #allowPrivilegeEscalation: true
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              ulimit -l unlimited
+              exec /app/cray/scripts/start_one_server.sh
+          env:
+          - name: POD_NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+          - name: MEGATRON_HEADLESS
+            value: {{ include "scalarlm.megatronname" . }}-headless
+          - name: NCCL_IB_GID_INDEX
+            value: "1"
+          - name: NCCL_IB_HCA
+            value: "rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7"
+          - name: NCCL_IB_GID_INDEX
+            value: "1"
+          - name: NCCL_SOCKET_IFNAME
+            value: "eth0"
+          - name: GLOO_SOCKET_IFNAME
+            value: "eth0"
+          - name: NCCL_SOCKET_FAMILY
+            value: "AF_INET"
+          - name: NCCL_NET_GDR_LEVEL
+            value: "SYS"
+          - name: ROCR_VISIBLE_DEVICES
+            value: "0"
+          - name: HIP_VISIBLE_DEVICES
+            value: "0"
+          - name: NCCL_DEBUG_SUBSYS
+            value: "INIT,NET,COLL"
+          - name: HSA_NO_SCRATCH_RECLAIM
+            value: "1"
+          volumeMounts:
+          {{- range .Values.volumes }}
+            - name: {{ .name }}
+              mountPath: {{ .path }}
+          {{- end }}
+            - name: scalarlm-config
+              mountPath: /app/cray/cray-config.yaml
+              subPath: cray-config.yaml
+            - mountPath: /sys/fs/cgroup
+              name: cgroup
+              readOnly: true
+            - name: scalarlm-jobs
+              mountPath: /app/cray/jobs
+            - name: scalarlm-cache
+              mountPath: /root/.cache/huggingface
+            - name: scalarlm-slurm-config
+              mountPath: /app/cray/nfs
+            - mountPath: /dev/shm
+              name: dshm
+                #- name: infiniband-dev
+                #mountPath: /dev/infiniband
+                #- name: rdma-cm-dev
+                #mountPath: /dev/infiniband/rdma_cm
+                #- name: libibverbs-lib
+                #mountPath: /usr/lib/x86_64-linux-gnu/libibverbs.so.1
+                #readOnly: true
+                #- name: librdmacm-lib
+                #mountPath: /usr/lib/x86_64-linux-gnu/librdmacm.so.1
+                #readOnly: true
+                #- name: ibverbs-providers
+                #mountPath: /usr/lib/x86_64-linux-gnu/libibverbs
+                #readOnly: true
+                #- name: local-rdma-libs
+                #mountPath: /usr/local/rdma-lib
+                #readOnly: true
+                #- name: infiniband-class
+                #mountPath: /sys/class/infiniband
+                #readOnly: true
+                #- name: host-sys-class-net
+                #mountPath: /host/sys/class/net
+                #readOnly: true
+                #- name: host-proc-net
+                #mountPath: /host/proc/net
+                #readOnly: true
+                #- name: libionic
+                #mountPath: /usr/lib/x86_64-linux-gnu/libionic.so.1.1.54.0-184
+                #readOnly: true
+            - name: prestart-scripts
+              mountPath: /scripts
+          resources:
+            requests:
+              amd.com/gpu: 1
+              amd.com/nic: 1
+                #amd.com/rdma: 1
+                #rdma/rdma_shared_device_1: 1
+            limits:
+              amd.com/gpu: 1
+              amd.com/nic: 1
+                #amd.com/rdma: 1
+                #rdma/rdma_shared_device_1: 1
+          securityContext:
+            capabilities:
+              add: ["IPC_LOCK", "NET_ADMIN", "NET_RAW", "SYS_ADMIN", "IPC_LOCK", "SYS_RESOURCE", "SYS_RAWIO"]
+            allowPrivilegeEscalation: true
+              #privileged: true
+      volumes:
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 128Gi 
+        - name: scalarlm-jobs
+          persistentVolumeClaim:
+            claimName: scalarlm-jobs
+        - name: prestart-scripts
+          configMap:
+            name: add-routes
+        - name: scalarlm-cache
+          persistentVolumeClaim:
+            claimName: scalarlm-cache
+        - name: scalarlm-slurm-config
+          persistentVolumeClaim:
+            claimName: scalarlm-slurm-config
+        - name: scalarlm-config
+          configMap:
+            name: {{ .Release.Name }}-megatron-configmap
+        - name: infiniband-dev
+          hostPath:
+            path: /dev/infiniband
+            type: Directory
+        - name: rdma-cm-dev
+          hostPath:
+            path: /dev/infiniband/rdma_cm
+            type: CharDevice
+        - name: libibverbs-lib
+          hostPath:
+            path: /usr/lib/x86_64-linux-gnu/libibverbs.so.1
+            type: File
+        - name: librdmacm-lib
+          hostPath:
+            path: /usr/lib/x86_64-linux-gnu/librdmacm.so.1
+            type: File
+        - name: ibverbs-providers
+          hostPath:
+            path: /usr/lib/x86_64-linux-gnu/libibverbs
+            type: Directory
+        - name: local-rdma-libs
+          hostPath:
+            path: /usr/local/lib
+            type: Directory
+        - name: infiniband-class
+          hostPath:
+            path: /sys/class/infiniband
+            type: Directory
+        - name: host-sys-class-net
+          hostPath:
+            path: /sys/class/net
+            type: Directory
+        - name: host-proc-net
+          hostPath:
+            path: /proc/net
+            type: Directory
+        - name: rdma-net-devices
+          hostPath:
+            path: /sys/class/net
+            type: Directory
+        - name: host-netns
+          hostPath:
+            path: /var/run/netns
+            type: DirectoryOrCreate
+        - name: libionic
+          hostPath:
+            path: /usr/lib/x86_64-linux-gnu/libionic.so.1.1.54.0-184
+            type: File
+        - name: cgroup
+          hostPath:
+            path: /sys/fs/cgroup
+            type: Directory
+      {{- range .Values.volumes }}
+        - name: {{ .name }}
+          hostPath:
+            path: {{ .hostPath }}
+      {{- end }}
+

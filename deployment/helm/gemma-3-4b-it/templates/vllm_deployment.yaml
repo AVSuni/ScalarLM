@@ -1,0 +1,88 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "scalarlm.vllmname" . }}
+spec:
+  replicas: {{ .Values.inference_gpus }}
+  selector:
+    matchLabels:
+      {{- include "scalarlm.vllmlabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        k8s.v1.cni.cncf.io/networks: kube-amd-network/amd-host-device-sbr-nad
+      labels:
+        {{- include "scalarlm.vllmlabels" . | nindent 8 }}
+    spec:
+      hostNetwork: false
+      hostIPC: true
+    {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+    {{- end }}
+      {{- include "scalarlm.scheduling" . | nindent 6 }}
+      containers:
+        - name: {{ .Chart.Name }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              chmod +x /scripts/add-routes.sh
+              bash /scripts/add-routes.sh
+              exec /app/cray/scripts/start_one_server.sh
+          env:
+            - name: UCX_TLS
+              value: "rc_verbs,ud_verbs,self, rocm_copy, rocm_ipc"
+            - name: UCX_RC_ENABLE
+              value: "y"
+            - name: UCX_LOG_LEVEL
+              value: "info"
+            - name: OMPI_MCA_pml
+              value: "ucx"
+          ports:
+            - name: http
+              containerPort: 8001
+          volumeMounts:
+          {{- range .Values.volumes }}
+            - name: {{ .name }}
+              mountPath: {{ .path }}
+          {{- end }}
+            - name: scalarlm-config
+              mountPath: /app/cray/cray-config.yaml
+              subPath: cray-config.yaml
+            - name: scalarlm-jobs
+              mountPath: /app/cray/jobs
+            - name: scalarlm-cache
+              mountPath: /root/.cache/huggingface
+            - name: prestart-scripts
+              mountPath: /scripts
+          resources:
+            requests:
+              amd.com/gpu: 1
+              amd.com/nic: 1
+            limits:
+              amd.com/gpu: 1
+              amd.com/nic: 1
+          securityContext:
+            capabilities:
+              add: ["NET_ADMIN", "NET_RAW", "SYS_ADMIN", "IPC_LOCK", "SYS_RESOURCE", "SYS_RAWIO"]
+      volumes:
+        - name: scalarlm-jobs
+          persistentVolumeClaim:
+            claimName: scalarlm-jobs
+        - name: prestart-scripts
+          configMap:
+            name: add-routes
+        - name: scalarlm-cache
+          persistentVolumeClaim:
+            claimName: scalarlm-cache
+        - name: scalarlm-config
+          configMap:
+            name: {{ .Release.Name }}-vllm-configmap
+      {{- range .Values.volumes }}
+        - name: {{ .name }}
+          hostPath:
+            path: {{ .hostPath }}
+      {{- end }}
+

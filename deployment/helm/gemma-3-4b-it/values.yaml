@@ -1,0 +1,60 @@
+image:
+  repository: avesuni/scalarlm-rccl
+  tag: v0.0.83
+  pullPolicy: Always
+
+nad:
+  create: false
+
+networkConfig:
+  create: false
+
+# Optional pod scheduling (empty = no constraint).
+# Pin to nodes: set nodeAffinity.hostnames and/or affinity.
+nodeAffinity:
+  hostnames: []
+  labels: {}
+  # preferred: false
+  # weight: 100
+nodeSelector: {}
+affinity: {}
+tolerations: []
+
+service:
+  type: ClusterIP
+  api_port: 8000
+  vllm_port: 8001
+  externalIP: 64.139.222.102
+
+jobs_pvc:
+  storageClass: longhorn
+  size: 100Gi
+
+cache_pvc:
+  storageClass: longhorn
+  size: 400Gi
+
+slurm_config_pvc:
+    storageClass: longhorn
+    size: 10Gi
+
+cloudflared:
+  tunnelToken: eyJhIjoiNDYyNTI5ZDY5NTEyZjg5MTg3OTJjY2M4ZmZkODlhY2QiLCJ0IjoiZTFhZThmZGUtM2ExYi00ZjhlLThhMDgtMDA5Y2YyNWE2MDZkIiwicyI6IlpUaGpabVkzWmpNdE56RXlOaTAwTkRSaExUazBaRGd0TkRrNVlqSmxZems1TkRjNCJ9 
+
+model: google/gemma-3-4b-it
+max_model_length: 4096
+gpu_memory_utilization: 0.95
+dtype: bfloat16
+
+training_gpus: 16
+inference_gpus: 1
+
+max_train_time: 86400
+
+volumes:
+  - name: modules
+    hostPath: /lib/modules
+    path: /lib/modules
+  - name: sources
+    hostPath: /usr/src
+    path: /usr/src
