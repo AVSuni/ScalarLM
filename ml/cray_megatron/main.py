@@ -10,21 +10,29 @@ from cray_infra.training.training_job_status import TrainingJobStatus
 from cray_infra.huggingface.get_hf_token import get_hf_token
 from cray_megatron.megatron.training_harness import TrainingHarness
 from cray_infra.training.distributed import init, finalize
+from cray_infra.training.train_debug import (
+    is_fault_handler_enabled,
+    is_train_debug_enabled,
+)
 
 logger = logging.getLogger(__name__)
 
-faulthandler.enable()
-faulthandler.dump_traceback_later(timeout=600, repeat=True)
+if is_fault_handler_enabled():
+    faulthandler.enable()
+    faulthandler.dump_traceback_later(timeout=600, repeat=True)
 
 
 def _boot(msg: str) -> None:
+    if not is_train_debug_enabled():
+        return
     rank = os.environ.get("RANK", os.environ.get("SLURM_PROCID", "?"))
     line = f"[rank={rank}] boot pid={os.getpid()} t={time.monotonic():.3f}: {msg}\n"
     sys.stderr.write(line)
     sys.stderr.flush()
 
 
-_boot("main.py entered")
+if is_train_debug_enabled():
+    _boot("main.py entered")
 
 
 def print_exception():
@@ -91,8 +99,9 @@ def setup_logging():
     logging.basicConfig(level=logging.INFO)
 
     logging.getLogger("filelock").setLevel(logging.WARNING)
+    fsdp_level = logging.INFO if is_train_debug_enabled() else logging.WARNING
     logging.getLogger("cray_megatron.megatron.distribution.fsdp").setLevel(
-        logging.INFO
+        fsdp_level
     )
 
 

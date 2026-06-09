@@ -23,11 +23,14 @@ import logging
 import os
 import sys
 from cray_infra.training.distributed import allreduce, get_rank, get_size
+from cray_infra.training.train_debug import is_train_debug_enabled
 
 logger = logging.getLogger(__name__)
 
 
 def _trace_loop(msg: str) -> None:
+    if not is_train_debug_enabled():
+        return
     rank = os.environ.get("RANK", os.environ.get("SLURM_PROCID", "?"))
     line = f"[rank={rank}] training_loop [{time.monotonic():.3f}]: {msg}\n"
     sys.stderr.write(line)

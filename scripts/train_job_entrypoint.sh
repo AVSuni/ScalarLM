@@ -2,12 +2,13 @@
 
 # Safely execute this bash script
 # e exit on first failure
-# x all executed commands are printed to the terminal
 # u unset variables are errors
-# a export all variables to the environment
 # E any trap on ERR is inherited by shell functions
 # -o pipefail | produces a failure code if any stage fails
-set -Eeuoxa pipefail
+set -Eeuo pipefail
+if [[ "${CRAY_TRAIN_DEBUG:-0}" == "1" ]]; then
+  set -x
+fi
 
 export CRAY_TRAINING_JOB_CONFIG_PATH=REPLACE_CONFIG_PATH
 
@@ -65,7 +66,6 @@ export NCCL_SOCKET_FAMILY=AF_INET
 export NCCL_NET_GDR_LEVEL=SYS
 export ROCR_VISIBLE_DEVICES=0
 export HIP_VISIBLE_DEVICES=0
-export NCCL_DEBUG_SUBSYS=INIT,NET,COLL
 export PYTHONUNBUFFERED=1
 
 echo "Launching torchrun rank=$RANK world=$WORLD_SIZE on $(hostname) master=$MASTER_ADDR:$MASTER_PORT" >&2

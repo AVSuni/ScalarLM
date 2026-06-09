@@ -5,8 +5,12 @@ import time
 import torch
 import torch.distributed as dist
 
+from cray_infra.training.train_debug import is_train_debug_enabled
+
 
 def _trace(msg: str) -> None:
+    if not is_train_debug_enabled():
+        return
     rank = os.environ.get("RANK", os.environ.get("SLURM_PROCID", "?"))
     line = f"[rank={rank}] dist [{time.monotonic():.3f}]: {msg}\n"
     sys.stderr.write(line)
@@ -73,16 +77,8 @@ def get_size():
 
 def barrier():
     if not dist.is_initialized():
-        _trace("barrier() skipped, dist not initialized")
         return
-    local_rank = os.environ.get("LOCAL_RANK", "?")
-    cuda_device = torch.cuda.current_device() if torch.cuda.is_available() else "n/a"
-    _trace(
-        f"barrier() enter pid={os.getpid()} rank={dist.get_rank()} "
-        f"local_rank={local_rank} cuda_current_device={cuda_device}"
-    )
     dist.barrier()
-    _trace(f"barrier() complete rank={dist.get_rank()}")
 
 
 def _ensure_contiguous(tensor):

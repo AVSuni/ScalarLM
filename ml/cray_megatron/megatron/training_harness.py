@@ -16,7 +16,12 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+from cray_infra.training.train_debug import is_train_debug_enabled
+
+
 def _trace_harness(msg: str) -> None:
+    if not is_train_debug_enabled():
+        return
     rank = os.environ.get("RANK", os.environ.get("SLURM_PROCID", "?"))
     line = f"[rank={rank}] harness [{time.monotonic():.3f}]: {msg}\n"
     sys.stderr.write(line)

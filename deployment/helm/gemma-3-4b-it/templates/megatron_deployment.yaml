@@ -68,8 +68,8 @@ spec:
             value: "0"
           - name: HIP_VISIBLE_DEVICES
             value: "0"
-          - name: NCCL_DEBUG_SUBSYS
-            value: "INIT,NET,COLL"
+          - name: CRAY_TRAIN_DEBUG
+            value: "0"
           - name: HSA_NO_SCRATCH_RECLAIM
             value: "1"
           volumeMounts:

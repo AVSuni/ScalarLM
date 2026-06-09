@@ -3,9 +3,14 @@ import time
 from functools import wraps
 
 from cray_infra.training.distributed import get_rank, barrier
+from cray_infra.training.train_debug import is_train_debug_enabled
 
 
 def _trace_main_rank_only(msg: str) -> None:
+    if not is_train_debug_enabled():
+        return
+    if _dist_ready() and get_rank() != 0:
+        return
     rank = get_rank() if _dist_ready() else "?"
     line = f"[rank={rank}] main_rank_only [{time.monotonic():.3f}]: {msg}\n"
     sys.stderr.write(line)

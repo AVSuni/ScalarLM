@@ -31,6 +31,9 @@ def load_distribution_strategy():
         if distribution_strategy == "ddp":
             logger.info("Using DDP distribution strategy.")
             strategy["strategy"] = DDP
+        elif distribution_strategy == "fsdp":
+            logger.info("Using SimpleFSDP distribution strategy.")
+            strategy["strategy"] = SimpleFSDP
         else:
             logger.warning(
                 f"Unknown distribution strategy '{distribution_strategy}' "
