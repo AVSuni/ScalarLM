@@ -33,71 +33,26 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command: ["/app/cray/scripts/start_one_server.sh"]
           env:
-            # UCX configuration for Ionic (no SRQ or RC support)
-            - name: UCX_UD_ETH_DGID_CHECK
-              value: "n"
-            - name: UCX_TLS
-              value: "rc_verbs,ud_verbs,tcp,rocm,self"
-            - name: UCX_NET_DEVICES
-              value: "eth0"
-            - name: UCX_IB_GID_INDEX
+            - name: NCCL_IB_GID_INDEX
               value: "1"
-            - name: UCX_LOG_LEVEL
-              value: "info"
-            - name: UCX_WARN_UNUSED_ENV_VARS
-              value: "n"
-            - name: UCX_IB_USE_SRQ
-              value: "n"
-            - name: UCX_SOCKADDR_TLS_PRIORITY
-              value: "tcp"
-            - name: UCX_RC_ENABLE
-              value: "n"
-            # Ensure TCP is used for rendezvous
-            - name: UCX_RNDV_SCHEME
-              value: "put_zcopy"
-            - name: UCX_RNDV_THRESH
-              value: "inf"
-            - name: UCX_ZCOPY_THRESH
-              value: "inf"
-            - name: UCX_IB_REG_METHODS
-              value: "rcache"
-            - name: UCX_RCACHE_ENABLE
-              value: "n"
-            # MPI configuration
-            - name: OMPI_MCA_pml
-              value: "ucx"
-            - name: OMPI_MCA_btl
-              value: "^vader,openib,uct"
-            - name: OMPI_MCA_oob_tcp_if_include
+            - name: NCCL_IB_HCA
+              value: "rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7"
+            - name: NCCL_SOCKET_IFNAME
               value: "eth0"
-            - name: UCX_TCP_RX_SEG_SIZE
-              value: "16m"
-            - name: UCX_TCP_TX_SEG_SIZE
-              value: "16m"
-            - name: UCX_TCP_SNDBUF
-              value: "16m"
-            - name: UCX_TCP_RCVBUF
-              value: "16m"
-            - name: UCX_SOCKADDR_CM_ENABLE
-              value: "n"
-            - name: UCX_TCP_NODELAY
-              value: "y"
-            - name: UCX_TCP_PREFER_DEFAULT
-              value: "n"
-            - name: UCX_TCP_MAX_IOV
-              value: "1024"
-            - name: UCX_TCP_SENDV_THRESH
-              value: "16777216"
-            - name: UCX_MM_SEG_SIZE
-              value: "32m"
-            - name: UCX_NUM_EPS
-              value: "auto"
-            - name: UCX_NUM_PPS
-              value: "auto"
-            - name: OMPI_MCA_btl_tcp_eager_limit
-              value: "16777216"
-            - name: OMPI_MCA_btl_tcp_max_send_size
-              value: "16777216"
+            - name: GLOO_SOCKET_IFNAME
+              value: "eth0"
+            - name: NCCL_SOCKET_FAMILY
+              value: "AF_INET"
+            - name: NCCL_NET_GDR_LEVEL
+              value: "SYS"
+            - name: ROCR_VISIBLE_DEVICES
+              value: "0"
+            - name: HIP_VISIBLE_DEVICES
+              value: "0"
+            - name: CRAY_TRAIN_DEBUG
+              value: "0"
+            - name: HSA_NO_SCRATCH_RECLAIM
+              value: "1"
           ports:
             - name: http
               containerPort: {{ .Values.service.api_port }}

@@ -54,8 +54,6 @@ spec:
             value: "1"
           - name: NCCL_IB_HCA
             value: "rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7"
-          - name: NCCL_IB_GID_INDEX
-            value: "1"
           - name: NCCL_SOCKET_IFNAME
             value: "eth0"
           - name: GLOO_SOCKET_IFNAME
