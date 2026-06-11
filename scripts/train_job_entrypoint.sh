@@ -29,16 +29,16 @@ export WORLD_SIZE=$SLURM_NTASKS
 export MASTER_ADDR=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)
 export MASTER_PORT=29500
 
-# Ensure proper env vars are set/exported in the api pod. Suggested example for single process per node:
-export NCCL_IB_GID_INDEX=1
-export NCCL_IB_HCA=rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7
-export HSA_NO_SCRATCH_RECLAIM=1
-export NCCL_SOCKET_IFNAME=eth0
-export GLOO_SOCKET_IFNAME=eth0
-export NCCL_SOCKET_FAMILY=AF_INET
-export NCCL_NET_GDR_LEVEL=SYS
-export ROCR_VISIBLE_DEVICES=0
-export HIP_VISIBLE_DEVICES=0
+# Ensure essential env vars are set/exported in the api pod. Suggested example for single process per node:
+# export NCCL_IB_GID_INDEX=1
+# export NCCL_IB_HCA=rdma0,rdma1,rdma2,rdma3,rdma4,rdma5,rdma6,rdma7
+# export HSA_NO_SCRATCH_RECLAIM=1
+# export NCCL_SOCKET_IFNAME=eth0
+# export GLOO_SOCKET_IFNAME=eth0
+# export NCCL_SOCKET_FAMILY=AF_INET
+# export NCCL_NET_GDR_LEVEL=SYS
+# export ROCR_VISIBLE_DEVICES=0
+# export HIP_VISIBLE_DEVICES=0
 
 echo "[launcher t=$(date +%s)] LOCAL_DIRECTORY=${LOCAL_DIRECTORY}" >&2
 echo "[launcher t=$(date +%s)] SLURM_JOB_NODELIST=${SLURM_JOB_NODELIST:-?} SLURM_NTASKS=${SLURM_NTASKS:-?} SLURM_NTASKS_PER_NODE=${SLURM_NTASKS_PER_NODE:-?}" >&2
